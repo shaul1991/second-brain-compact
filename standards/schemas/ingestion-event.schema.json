@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private-only Ingestion Payload",
+  "type": "object",
+  "required": ["body"],
+  "properties": {
+    "body": { "type": "string", "minLength": 1 },
+    "title": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "links": { "type": "array", "items": { "type": "string" } },
+    "session_id": { "type": "string" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "instance": { "type": "string" },
+    "request_id": { "type": "string", "pattern": "^REQ-[0-9]{8}-[0-9]{4}$" }
+  },
+  "additionalProperties": true
+}
+

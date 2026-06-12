@@ -1,0 +1,40 @@
+services:
+  mcp:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PRIVATE_REPO_PATH: /data
+      SECOND_BRAIN_RUNTIME_PATH: /runtime
+      INGESTION_CAPTURE_PATH: /data/capture/default
+      INGESTION_LEDGER_PATH: /runtime/ingestion/seen-keys
+      MCP_AUDIT_LOG: /runtime/mcp/audit.log.jsonl
+      RUNTIME_LOGS_PATH: /runtime/logs
+      MCP_DEVICE: ${MCP_DEVICE:-local}
+      DATA_GIT_BRANCH: ${DATA_GIT_BRANCH:-main}
+    volumes:
+      - ./data:/data
+      - ./runtime:/runtime
+    stdin_open: true
+    tty: false
+    command: ["python", "-m", "services.mcp"]
+
+  cli:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PRIVATE_REPO_PATH: /data
+      SECOND_BRAIN_RUNTIME_PATH: /runtime
+      INGESTION_CAPTURE_PATH: /data/capture/default
+      INGESTION_LEDGER_PATH: /runtime/ingestion/seen-keys
+      MCP_AUDIT_LOG: /runtime/mcp/audit.log.jsonl
+      RUNTIME_LOGS_PATH: /runtime/logs
+      MCP_DEVICE: ${MCP_DEVICE:-local}
+      DATA_GIT_BRANCH: ${DATA_GIT_BRANCH:-main}
+    volumes:
+      - ./data:/data
+      - ./runtime:/runtime
+    entrypoint: ["/app/bin/brain"]

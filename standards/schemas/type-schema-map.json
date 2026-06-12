@@ -1,0 +1,8 @@
+{
+  "schema_dir": "standards/schemas",
+  "type_to_schema": {
+    "capture": "capture.schema.json",
+    "ingestion-event": "ingestion-event.schema.json"
+  }
+}
+

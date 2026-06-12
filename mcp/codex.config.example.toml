@@ -1,0 +1,14 @@
+[mcp_servers.second-brain]
+command = "docker"
+args = [
+  "compose",
+  "-f",
+  "/ABS/PATH/second-brain-compact/docker-compose.yml",
+  "run",
+  "--rm",
+  "-i",
+  "-T",
+  "mcp",
+]
+startup_timeout_sec = 60
+

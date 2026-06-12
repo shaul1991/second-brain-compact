@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts import brain_status
+from services.ingestion.emit import emit_capture
+from services.promotion.core import PromotionError, archive_capture, promote_capture
+from services.vault import init_vault, load_config
+
+
+def _json(data: dict, *, pretty: bool = True) -> None:
+    print(json.dumps(data, ensure_ascii=False, indent=2 if pretty else None))
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _log_git(message: str) -> None:
+    cfg = load_config()
+    cfg.logs_dir.mkdir(parents=True, exist_ok=True)
+    with (cfg.logs_dir / "data-git.log").open("a", encoding="utf-8") as handle:
+        handle.write(f"{_now()} {message}\n")
+
+
+def _run_git(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    cfg = load_config()
+    env = {
+        **os.environ,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "safe.directory",
+        "GIT_CONFIG_VALUE_0": "*",
+    }
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=cfg.data_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if check and proc.returncode != 0:
+        _log_git(f"git {' '.join(args)} failed: {proc.stdout.strip()} {proc.stderr.strip()}")
+        raise SystemExit(proc.returncode)
+    return proc
+
+
+def _ensure_data_repo() -> None:
+    cfg = load_config()
+    init_vault(cfg)
+    if not (cfg.data_root / ".git").exists():
+        _run_git(["init", "-b", cfg.data_git_branch])
+    for key, value in {
+        "user.name": "Second Brain Compact",
+        "user.email": "second-brain@example.invalid",
+    }.items():
+        current = _run_git(["config", "--get", key], check=False)
+        if current.returncode != 0 or not current.stdout.strip():
+            _run_git(["config", key, value])
+
+
+def cmd_init(_args: argparse.Namespace) -> int:
+    paths = init_vault()
+    _json({"outcome": "initialized", "paths": [str(p) for p in paths]})
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    snapshot = brain_status.collect_status()
+    if args.json:
+        _json(snapshot)
+    else:
+        print(brain_status.render_text(snapshot))
+    return 0
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    text = args.json if args.json is not None else sys.stdin.read()
+    if not text.strip():
+        raise SystemExit("ingest requires JSON on stdin or --json")
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise SystemExit("ingest payload must be a JSON object")
+    result = emit_capture(payload)
+    _json({"status": result.status, "capture_id": result.capture_id, "reason": result.reason})
+    return 0 if result.ok else 2
+
+
+def cmd_promote(args: argparse.Namespace) -> int:
+    try:
+        result = promote_capture(args.id, target_dir=args.target, dry_run=args.dry_run)
+    except PromotionError as exc:
+        _json({"outcome": "rejected", "reason": str(exc)})
+        return 2
+    _json(
+        {
+            "outcome": result.outcome,
+            "capture_id": result.capture_id,
+            "target": str(result.target),
+            "breadcrumb": str(result.breadcrumb) if result.breadcrumb else None,
+        }
+    )
+    return 0
+
+
+def cmd_archive(args: argparse.Namespace) -> int:
+    try:
+        result = archive_capture(args.id, reason=args.reason, dry_run=args.dry_run)
+    except PromotionError as exc:
+        _json({"outcome": "rejected", "reason": str(exc)})
+        return 2
+    _json({"outcome": result.outcome, "capture_id": result.capture_id, "target": str(result.target)})
+    return 0
+
+
+def data_init(_args: argparse.Namespace) -> int:
+    _ensure_data_repo()
+    _json({"outcome": "data repo initialized", "path": str(load_config().data_root)})
+    return 0
+
+
+def data_remote_add(args: argparse.Namespace) -> int:
+    _ensure_data_repo()
+    existing = _run_git(["remote", "get-url", "origin"], check=False)
+    if existing.returncode == 0:
+        _run_git(["remote", "set-url", "origin", args.url])
+        outcome = "remote updated"
+    else:
+        _run_git(["remote", "add", "origin", args.url])
+        outcome = "remote added"
+    _json({"outcome": outcome, "remote": "origin", "url": args.url})
+    return 0
+
+
+def data_status(_args: argparse.Namespace) -> int:
+    _ensure_data_repo()
+    proc = _run_git(["status", "--short", "--branch"])
+    print(proc.stdout, end="")
+    return 0
+
+
+def _dirty() -> bool:
+    proc = _run_git(["status", "--porcelain"], check=False)
+    return bool(proc.stdout.strip())
+
+
+def _commit(message: str | None = None) -> bool:
+    if not _dirty():
+        print("data repo has no changes")
+        return False
+    _run_git(["add", "-A"])
+    msg = message or f"backup: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    _run_git(["commit", "-m", msg])
+    return True
+
+
+def data_commit(args: argparse.Namespace) -> int:
+    _ensure_data_repo()
+    committed = _commit(args.message)
+    _json({"outcome": "committed" if committed else "no changes"})
+    return 0
+
+
+def data_pull(_args: argparse.Namespace) -> int:
+    _ensure_data_repo()
+    cfg = load_config()
+    _run_git(["pull", "--rebase", "origin", cfg.data_git_branch])
+    _json({"outcome": "pulled", "branch": cfg.data_git_branch})
+    return 0
+
+
+def data_push(_args: argparse.Namespace) -> int:
+    _ensure_data_repo()
+    cfg = load_config()
+    _run_git(["push", "-u", "origin", cfg.data_git_branch])
+    _json({"outcome": "pushed", "branch": cfg.data_git_branch})
+    return 0
+
+
+def data_sync(args: argparse.Namespace) -> int:
+    _ensure_data_repo()
+    cfg = load_config()
+    _commit(args.message)
+    _run_git(["pull", "--rebase", "origin", cfg.data_git_branch])
+    _run_git(["push", "-u", "origin", cfg.data_git_branch])
+    _json({"outcome": "synced", "branch": cfg.data_git_branch})
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="brain")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    init = sub.add_parser("init")
+    init.set_defaults(func=cmd_init)
+
+    status = sub.add_parser("status")
+    status.add_argument("--json", action="store_true")
+    status.set_defaults(func=cmd_status)
+
+    ingest = sub.add_parser("ingest")
+    ingest.add_argument("--json")
+    ingest.set_defaults(func=cmd_ingest)
+
+    promote = sub.add_parser("promote")
+    promote.add_argument("--id", required=True)
+    promote.add_argument("--target", default="notes")
+    promote.add_argument("--dry-run", action="store_true")
+    promote.set_defaults(func=cmd_promote)
+
+    archive = sub.add_parser("archive")
+    archive.add_argument("--id", required=True)
+    archive.add_argument("--reason", default="manual archive")
+    archive.add_argument("--dry-run", action="store_true")
+    archive.set_defaults(func=cmd_archive)
+
+    data = sub.add_parser("data")
+    data_sub = data.add_subparsers(dest="data_command", required=True)
+    data_sub.add_parser("init").set_defaults(func=data_init)
+    remote = data_sub.add_parser("remote")
+    remote_sub = remote.add_subparsers(dest="remote_command", required=True)
+    remote_add = remote_sub.add_parser("add")
+    remote_add.add_argument("url")
+    remote_add.set_defaults(func=data_remote_add)
+    data_sub.add_parser("status").set_defaults(func=data_status)
+    commit = data_sub.add_parser("commit")
+    commit.add_argument("-m", "--message")
+    commit.set_defaults(func=data_commit)
+    data_sub.add_parser("pull").set_defaults(func=data_pull)
+    data_sub.add_parser("push").set_defaults(func=data_push)
+    sync = data_sub.add_parser("sync")
+    sync.add_argument("-m", "--message")
+    sync.set_defaults(func=data_sync)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

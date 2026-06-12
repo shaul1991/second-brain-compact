@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private-only Capture",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "status",
+    "visibility",
+    "title",
+    "owner",
+    "created_at",
+    "updated_at",
+    "source",
+    "classification",
+    "promotion_target"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^CAP-(?:[a-z0-9]+-)?[0-9]{8}-[0-9]{4}$"
+    },
+    "type": { "const": "capture" },
+    "status": { "enum": ["draft", "approved", "archived"] },
+    "visibility": { "enum": ["private", "restricted"] },
+    "classification": { "enum": ["untriaged", "private", "archived"] },
+    "promotion_target": { "enum": ["undecided", "private", "archive"] }
+  },
+  "additionalProperties": true
+}
+
