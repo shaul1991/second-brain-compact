@@ -69,6 +69,27 @@ def collect_documents(*, include_restricted: bool = False) -> list[Document]:
 
 
 def search(query: str, top_k: int = 5) -> list[dict[str, object]]:
+    """Semantic-first recall with keyword fallback.
+
+    When the semantic backend is enabled and reachable, recall returns its
+    hybrid results (filling the previously-empty ``vector_score``). If the
+    engine is disabled, unreachable, or errors, recall falls back to the
+    local keyword search so the system always works (R-004 / R-005).
+    """
+    cfg = load_config()
+    if cfg.semantic_enabled:
+        try:
+            from services.retrieval.semantic import EngineUnavailable, SemanticClient
+
+            return SemanticClient.from_config(cfg).search(query, top_k=top_k)
+        except EngineUnavailable:
+            pass  # engine down → keyword fallback
+        except Exception:
+            pass  # never let the optional backend break recall
+    return _keyword_search(query, top_k=top_k)
+
+
+def _keyword_search(query: str, top_k: int = 5) -> list[dict[str, object]]:
     terms = tokenize(query)
     if not terms:
         return []
@@ -109,4 +130,33 @@ def get_note(doc_id: str) -> dict[str, object] | None:
                 "body": doc.body,
             }
     return None
+
+
+def reindex() -> dict[str, object]:
+    """Rebuild the semantic index from the vault (R-003 / AC-4).
+
+    Clears this vault's container, then re-adds every non-restricted note.
+    This is the source of truth for index/vault consistency: incremental
+    add/remove hooks are best-effort, but reindex always reconciles.
+    """
+    cfg = load_config()
+    if not cfg.semantic_enabled:
+        return {"status": "disabled"}
+    from services.retrieval.semantic import EngineUnavailable, SemanticClient
+
+    client = SemanticClient.from_config(cfg)
+    try:
+        client.clear()
+    except EngineUnavailable as exc:
+        return {"status": "unavailable", "reason": str(exc)}
+    docs = collect_documents(include_restricted=False)
+    added = 0
+    failed = 0
+    for doc in docs:
+        try:
+            client.add(doc.doc_id, doc.body, title=doc.title)
+            added += 1
+        except EngineUnavailable:
+            failed += 1
+    return {"status": "ok", "added": added, "failed": failed, "total": len(docs)}
 

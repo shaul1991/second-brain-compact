@@ -26,6 +26,18 @@ class VaultConfig:
     device: str
     owner: str
     data_git_branch: str
+    semantic_enabled: bool
+    semantic_base_url: str
+    semantic_api_key: str | None
+    semantic_container: str
+    semantic_timeout: float
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def repo_root() -> Path:
@@ -50,6 +62,12 @@ def load_config() -> VaultConfig:
     audit_log = _path_from_env(
         "MCP_AUDIT_LOG", str(runtime_root / "mcp" / "audit.log.jsonl")
     )
+    owner = os.environ.get("SECOND_BRAIN_OWNER", "local") or "local"
+    api_key = os.environ.get("SUPERMEMORY_API_KEY") or None
+    try:
+        timeout = float(os.environ.get("SEMANTIC_TIMEOUT_SECONDS", "5"))
+    except (TypeError, ValueError):
+        timeout = 5.0
     return VaultConfig(
         data_root=data_root,
         runtime_root=runtime_root,
@@ -58,8 +76,19 @@ def load_config() -> VaultConfig:
         logs_dir=logs_dir,
         audit_log=audit_log,
         device=os.environ.get("MCP_DEVICE", "local") or "local",
-        owner=os.environ.get("SECOND_BRAIN_OWNER", "local") or "local",
+        owner=owner,
         data_git_branch=os.environ.get("DATA_GIT_BRANCH", "main") or "main",
+        semantic_enabled=_env_flag("SEMANTIC_SEARCH_ENABLED", False),
+        semantic_base_url=(
+            os.environ.get("SUPERMEMORY_BASE_URL", "http://localhost:6767")
+            or "http://localhost:6767"
+        ),
+        semantic_api_key=api_key,
+        semantic_container=(
+            os.environ.get("SUPERMEMORY_CONTAINER_TAG", f"sb-{slug_token(owner)}")
+            or f"sb-{slug_token(owner)}"
+        ),
+        semantic_timeout=timeout,
     )
 
 
