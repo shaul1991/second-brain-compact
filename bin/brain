@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts import brain_status
 from services.ingestion.emit import emit_capture
 from services.promotion.core import PromotionError, archive_capture, promote_capture
+from services.retrieval.documents import reindex as reindex_vault
 from services.vault import init_vault, load_config
 
 
@@ -124,6 +125,12 @@ def cmd_archive(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reindex(_args: argparse.Namespace) -> int:
+    result = reindex_vault()
+    _json(result)
+    return 0 if result.get("status") in {"ok", "disabled"} else 2
+
+
 def data_init(_args: argparse.Namespace) -> int:
     _ensure_data_repo()
     _json({"outcome": "data repo initialized", "path": str(load_config().data_root)})
@@ -224,6 +231,9 @@ def build_parser() -> argparse.ArgumentParser:
     archive.add_argument("--reason", default="manual archive")
     archive.add_argument("--dry-run", action="store_true")
     archive.set_defaults(func=cmd_archive)
+
+    reindex = sub.add_parser("reindex")
+    reindex.set_defaults(func=cmd_reindex)
 
     data = sub.add_parser("data")
     data_sub = data.add_subparsers(dest="data_command", required=True)
