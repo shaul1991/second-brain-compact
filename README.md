@@ -113,6 +113,36 @@ Archive a capture instead:
 docker compose run --rm cli archive --id CAP-local-YYYYMMDD-0001 --reason "not useful"
 ```
 
+## Semantic Search (optional)
+
+By default `recall` uses local keyword search. You can optionally enable
+meaning-based recall backed by a **local** [supermemory](https://github.com/supermemoryai/supermemory)
+engine. It is strictly opt-in and fully local — nothing is sent to any cloud.
+
+Enable it by setting `SEMANTIC_SEARCH_ENABLED=true` and starting the `semantic`
+profile (supermemory + a local Ollama for offline embeddings):
+
+```bash
+docker compose --profile semantic up -d supermemory ollama
+docker compose run --rm cli reindex
+```
+
+How it works:
+
+- Only **promoted, non-restricted** notes are indexed. Restricted captures are
+  never sent to the engine.
+- `promote` adds a note to the index; `reindex` rebuilds the whole index from
+  the vault (use after editing notes directly, or on a new machine).
+- The index lives under `runtime/` — it is derived and rebuildable, so it is
+  not backed up. Pull your Markdown on a new machine and run `reindex`.
+- If the engine is disabled, unreachable, or pointed at a non-local URL,
+  `recall` automatically falls back to keyword search. The MCP tool surface is
+  unchanged — clients still use the same single `second-brain` plugin.
+
+See `specs/001-supermemory-recall/` for goal/spec/plan. Self-hosting the engine
+(image, port, Ollama embedding config) still needs validation against the
+upstream supermemory self-host docs; see the plan's "구현 전 검증 항목".
+
 ## Data Git
 
 `data/` can be a nested private Git repository.
