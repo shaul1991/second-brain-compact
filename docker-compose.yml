@@ -13,6 +13,11 @@ services:
       RUNTIME_LOGS_PATH: /runtime/logs
       MCP_DEVICE: ${MCP_DEVICE:-local}
       DATA_GIT_BRANCH: ${DATA_GIT_BRANCH:-main}
+      SEMANTIC_SEARCH_ENABLED: ${SEMANTIC_SEARCH_ENABLED:-false}
+      SUPERMEMORY_BASE_URL: ${SUPERMEMORY_BASE_URL:-http://supermemory:6767}
+      SUPERMEMORY_CONTAINER_TAG: ${SUPERMEMORY_CONTAINER_TAG:-sb-local}
+      SUPERMEMORY_API_KEY: ${SUPERMEMORY_API_KEY:-}
+      SEMANTIC_TIMEOUT_SECONDS: ${SEMANTIC_TIMEOUT_SECONDS:-5}
     volumes:
       - ./data:/data
       - ./runtime:/runtime
@@ -34,7 +39,47 @@ services:
       RUNTIME_LOGS_PATH: /runtime/logs
       MCP_DEVICE: ${MCP_DEVICE:-local}
       DATA_GIT_BRANCH: ${DATA_GIT_BRANCH:-main}
+      SEMANTIC_SEARCH_ENABLED: ${SEMANTIC_SEARCH_ENABLED:-false}
+      SUPERMEMORY_BASE_URL: ${SUPERMEMORY_BASE_URL:-http://supermemory:6767}
+      SUPERMEMORY_CONTAINER_TAG: ${SUPERMEMORY_CONTAINER_TAG:-sb-local}
+      SUPERMEMORY_API_KEY: ${SUPERMEMORY_API_KEY:-}
+      SEMANTIC_TIMEOUT_SECONDS: ${SEMANTIC_TIMEOUT_SECONDS:-5}
     volumes:
       - ./data:/data
       - ./runtime:/runtime
     entrypoint: ["/app/bin/brain"]
+
+  # --- Optional semantic-search stack (opt-in) -----------------------------
+  # OFF by default: SEMANTIC_SEARCH_ENABLED defaults to "false", so the mcp/cli
+  # services keep using keyword search and these two services are unused unless
+  # you start them. Enable with SEMANTIC_SEARCH_ENABLED=true and run:
+  #   docker compose --profile semantic up -d supermemory ollama
+  #   docker compose run --rm cli reindex
+  #
+  # LIVE-VALIDATION REQUIRED (see specs/001-supermemory-recall/plan.md):
+  #   - confirm the self-host image name + local API port (6767 assumed)
+  #   - confirm the env keys that point supermemory at the local ollama for
+  #     fully-offline embeddings (no external API)
+  supermemory:
+    profiles: ["semantic"]
+    image: supermemoryai/supermemory:latest  # VERIFY exact self-host image/tag
+    environment:
+      # VERIFY these keys against the upstream self-host README. Intent:
+      # use the local ollama for embeddings so nothing leaves the machine.
+      EMBEDDING_PROVIDER: ollama
+      OLLAMA_BASE_URL: http://ollama:11434
+      PORT: "6767"
+    depends_on:
+      - ollama
+    volumes:
+      - ./runtime/supermemory:/data  # derived index; rebuildable, not backed up
+    expose:
+      - "6767"
+
+  ollama:
+    profiles: ["semantic"]
+    image: ollama/ollama:latest
+    volumes:
+      - ./runtime/ollama:/root/.ollama  # local embedding models
+    expose:
+      - "11434"
