@@ -20,6 +20,34 @@ class PromotionError(ValueError):
     pass
 
 
+def _index_add(cfg: VaultConfig, doc_id: str, body: str, title: str) -> None:
+    """Best-effort: add a promoted note to the semantic index.
+
+    Never raises — promotion must succeed even if the engine is down. reindex
+    reconciles any miss (R-002 / R-003).
+    """
+    if not cfg.semantic_enabled:
+        return
+    try:
+        from services.retrieval.semantic import SemanticClient
+
+        SemanticClient.from_config(cfg).add(doc_id, body, title=title)
+    except Exception:
+        pass
+
+
+def _index_remove(cfg: VaultConfig, doc_id: str) -> None:
+    """Best-effort: drop a doc from the semantic index. Never raises."""
+    if not cfg.semantic_enabled:
+        return
+    try:
+        from services.retrieval.semantic import SemanticClient
+
+        SemanticClient.from_config(cfg).remove(doc_id)
+    except Exception:
+        pass
+
+
 @dataclass(frozen=True)
 class MoveResult:
     outcome: str
@@ -95,6 +123,7 @@ def promote_capture(
     pointer = f"# Promoted Capture\n\nPromoted to `private:{target_dir}/{filename}`.\n"
     atomic_write(breadcrumb, render_doc(triaged, pointer))
     src.unlink()
+    _index_add(config, f"private:{target_dir}/{filename}", body, str(promoted.get("title") or capture_id))
     return MoveResult("promoted", capture_id, target, breadcrumb)
 
 
@@ -129,5 +158,8 @@ def archive_capture(
         raise PromotionError(f"archive target already exists: {target}")
     atomic_write(target, render_doc(archived, body))
     src.unlink()
+    # Captures are restricted and normally never indexed; this is a best-effort
+    # safety net so an archived note never lingers in the index (R-002).
+    _index_remove(config, f"private:capture/default/{capture_id}.md")
     return MoveResult("archived", capture_id, target)
 
